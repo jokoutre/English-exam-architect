@@ -63,7 +63,7 @@ def create_word_docx(text, title):
     return doc_io
 
 def create_pdf(text, title):
-    """Converts text into a clean, printable PDF with crash protection"""
+    """Converts text into a clean, printable PDF with absolute crash protection"""
     pdf = FPDF()
     pdf.add_page()
     pdf.set_auto_page_break(auto=True, margin=15)
@@ -91,9 +91,19 @@ def create_pdf(text, title):
             pdf.ln(4)
             continue
             
-        # THE FIX: Shrink massively long underscores/dashes so they fit on the page
-        line = re.sub(r'_{15,}', '__________', line)
-        line = re.sub(r'-{15,}', '----------', line)
+        # THE ULTIMATE FIX 1: Target ALL long repeating dots, dashes, or underscores
+        line = re.sub(r'[_.\-=]{15,}', '__________', line)
+        
+        # THE ULTIMATE FIX 2: Check every single "word" (character chunk). 
+        # If it has no spaces and is longer than 50 characters, force a cut so it physically fits.
+        words = line.split()
+        safe_words = []
+        for word in words:
+            if len(word) > 50:
+                safe_words.append(word[:45] + "...")
+            else:
+                safe_words.append(word)
+        line = " ".join(safe_words)
             
         if line.startswith('### ') or line.startswith('## ') or line.startswith('# '):
             pdf.set_font("Helvetica", style="B", size=13)
@@ -103,11 +113,11 @@ def create_pdf(text, title):
         else:
             clean_line = line.replace('**', '')
             
-            # THE SAFETY NET: If a line is still too long, gracefully truncate it instead of crashing
+            # The Final Safety Net
             try:
                 pdf.multi_cell(0, 6, clean_line)
             except Exception:
-                pdf.multi_cell(0, 6, clean_line[:80] + "... [Line Truncated]")
+                pdf.multi_cell(0, 6, "[Unprintable content safely removed to prevent crash]")
                 
     pdf_out = pdf.output(dest='S')
     if isinstance(pdf_out, str):
