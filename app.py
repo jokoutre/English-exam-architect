@@ -2,7 +2,7 @@ import streamlit as st
 import google.generativeai as genai
 import PyPDF2
 import io
-import textwrap  # <--- THE NEW MAGIC SCISSORS
+import re
 from docx import Document
 from fpdf import FPDF
 
@@ -80,6 +80,13 @@ def create_pdf(text, title):
         
     text = text.encode('latin-1', errors='replace').decode('latin-1')
     
+    # 2. Aggressive Punctuation Shrinking
+    # This forces ANY long string of characters to become a safe, short length
+    text = re.sub(r'_{8,}', '________', text)   # Shrink underscores
+    text = re.sub(r'-{8,}', '--------', text)   # Shrink dashes
+    text = re.sub(r'\.{8,}', '........', text)  # Shrink dots
+    text = re.sub(r'={8,}', '========', text)   # Shrink equal signs
+    
     pdf.set_font("Helvetica", style="B", size=16)
     pdf.cell(0, 10, title, ln=True, align="C")
     pdf.ln(5)
@@ -91,21 +98,31 @@ def create_pdf(text, title):
             pdf.ln(4)
             continue
             
-        if line.startswith('### ') or line.startswith('## ') or line.startswith('# '):
-            pdf.set_font("Helvetica", style="B", size=13)
-            clean_heading = line.replace('# ', '').replace('## ', '').replace('### ', '').replace('**', '')
+        # 3. Force-break any remaining word longer than 40 characters
+        words = line.split()
+        safe_words = []
+        for word in words:
+            if len(word) > 40:
+                safe_words.append(word[:40] + "-") # Hard crop with a dash
+            else:
+                safe_words.append(word)
+        safe_line = " ".join(safe_words)
             
-            # Wrap long headings
-            wrapped_heading = textwrap.fill(clean_heading, width=70, break_long_words=True)
-            pdf.multi_cell(0, 8, wrapped_heading)
+        if safe_line.startswith('### ') or safe_line.startswith('## ') or safe_line.startswith('# '):
+            pdf.set_font("Helvetica", style="B", size=13)
+            clean_heading = safe_line.replace('# ', '').replace('## ', '').replace('### ', '').replace('**', '')
+            try:
+                pdf.multi_cell(0, 8, clean_heading)
+            except Exception:
+                pass # Skip silently if a heading fails
             pdf.set_font("Helvetica", size=11)
         else:
-            clean_line = line.replace('**', '')
-            
-            # THE ULTIMATE FIX: Forcefully snip ANY word/line that is longer than 85 characters.
-            # This guarantees the PDF engine will NEVER see a line it cannot handle.
-            wrapped_line = textwrap.fill(clean_line, width=85, break_long_words=True)
-            pdf.multi_cell(0, 6, wrapped_line)
+            clean_line = safe_line.replace('**', '')
+            # 4. Final Safety Net: If the PDF engine still panics, skip the line completely
+            try:
+                pdf.multi_cell(0, 6, clean_line)
+            except Exception:
+                pdf.cell(0, 6, "[Formatting error in line removed]", ln=True)
                 
     pdf_out = pdf.output(dest='S')
     if isinstance(pdf_out, str):
