@@ -2,7 +2,7 @@ import streamlit as st
 import google.generativeai as genai
 import PyPDF2
 import io
-import re  # <--- This is the new tool that fixes the long lines
+import textwrap  # <--- THE NEW MAGIC SCISSORS
 from docx import Document
 from fpdf import FPDF
 
@@ -91,33 +91,21 @@ def create_pdf(text, title):
             pdf.ln(4)
             continue
             
-        # THE ULTIMATE FIX 1: Target ALL long repeating dots, dashes, or underscores
-        line = re.sub(r'[_.\-=]{15,}', '__________', line)
-        
-        # THE ULTIMATE FIX 2: Check every single "word" (character chunk). 
-        # If it has no spaces and is longer than 50 characters, force a cut so it physically fits.
-        words = line.split()
-        safe_words = []
-        for word in words:
-            if len(word) > 50:
-                safe_words.append(word[:45] + "...")
-            else:
-                safe_words.append(word)
-        line = " ".join(safe_words)
-            
         if line.startswith('### ') or line.startswith('## ') or line.startswith('# '):
             pdf.set_font("Helvetica", style="B", size=13)
             clean_heading = line.replace('# ', '').replace('## ', '').replace('### ', '').replace('**', '')
-            pdf.multi_cell(0, 8, clean_heading)
+            
+            # Wrap long headings
+            wrapped_heading = textwrap.fill(clean_heading, width=70, break_long_words=True)
+            pdf.multi_cell(0, 8, wrapped_heading)
             pdf.set_font("Helvetica", size=11)
         else:
             clean_line = line.replace('**', '')
             
-            # The Final Safety Net
-            try:
-                pdf.multi_cell(0, 6, clean_line)
-            except Exception:
-                pdf.multi_cell(0, 6, "[Unprintable content safely removed to prevent crash]")
+            # THE ULTIMATE FIX: Forcefully snip ANY word/line that is longer than 85 characters.
+            # This guarantees the PDF engine will NEVER see a line it cannot handle.
+            wrapped_line = textwrap.fill(clean_line, width=85, break_long_words=True)
+            pdf.multi_cell(0, 6, wrapped_line)
                 
     pdf_out = pdf.output(dest='S')
     if isinstance(pdf_out, str):
