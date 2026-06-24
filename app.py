@@ -2,6 +2,7 @@ import streamlit as st
 import google.generativeai as genai
 import PyPDF2
 import io
+import re  # <--- This is the new tool that fixes the long lines
 from docx import Document
 from fpdf import FPDF
 
@@ -34,7 +35,6 @@ def create_word_docx(text, title):
     doc = Document()
     doc.add_heading(title, 0)
     
-    # Safely handle empty text
     if not text:
         text = "No content generated."
         
@@ -43,7 +43,6 @@ def create_word_docx(text, title):
         if not line:
             continue
             
-        # Handle Headings
         if line.startswith('### '):
             doc.add_heading(line.replace('### ', ''), level=3)
         elif line.startswith('## '):
@@ -51,12 +50,11 @@ def create_word_docx(text, title):
         elif line.startswith('# '):
             doc.add_heading(line.replace('# ', ''), level=1)
         else:
-            # Handle standard text and basic bolding (**text**)
             p = doc.add_paragraph()
             parts = line.split('**')
             for i, part in enumerate(parts):
                 run = p.add_run(part)
-                if i % 2 != 0: # Every second part is inside the **bold** markers
+                if i % 2 != 0: 
                     run.bold = True
                     
     doc_io = io.BytesIO()
@@ -70,32 +68,32 @@ def create_pdf(text, title):
     pdf.add_page()
     pdf.set_auto_page_break(auto=True, margin=15)
     
-    # Safely handle empty text
     if not text:
         text = "No content generated."
     
-    # 1. Unicode Sanitization (Prevents font crashing)
+    # 1. Unicode Sanitization
     replacements = {
         '‘': "'", '’': "'", '“': '"', '”': '"', '–': '-', '—': '-', '…': '...'
     }
     for search, replace in replacements.items():
         text = text.replace(search, replace)
         
-    # Force encode to latin-1 to protect the PDF engine
     text = text.encode('latin-1', errors='replace').decode('latin-1')
     
-    # Title formatting
     pdf.set_font("Helvetica", style="B", size=16)
     pdf.cell(0, 10, title, ln=True, align="C")
     pdf.ln(5)
     
-    # Body Text formatting
     pdf.set_font("Helvetica", size=11)
     for line in text.split('\n'):
         line = line.strip()
         if not line:
             pdf.ln(4)
             continue
+            
+        # THE FIX: Shrink massively long underscores/dashes so they fit on the page
+        line = re.sub(r'_{15,}', '__________', line)
+        line = re.sub(r'-{15,}', '----------', line)
             
         if line.startswith('### ') or line.startswith('## ') or line.startswith('# '):
             pdf.set_font("Helvetica", style="B", size=13)
@@ -104,15 +102,16 @@ def create_pdf(text, title):
             pdf.set_font("Helvetica", size=11)
         else:
             clean_line = line.replace('**', '')
-            pdf.multi_cell(0, 6, clean_line)
             
-    # 2. THE FIX: Force the engine to output a Stream ('S') instead of saving a blank file
+            # THE SAFETY NET: If a line is still too long, gracefully truncate it instead of crashing
+            try:
+                pdf.multi_cell(0, 6, clean_line)
+            except Exception:
+                pdf.multi_cell(0, 6, clean_line[:80] + "... [Line Truncated]")
+                
     pdf_out = pdf.output(dest='S')
-    
     if isinstance(pdf_out, str):
-        # If the library returns a string, safely encode it
         return pdf_out.encode('latin-1', errors='replace')
-    # If it returns bytes/bytearray, pass it through directly
     return bytes(pdf_out)
 
 # --- INITIALIZE SESSION STATE ---
@@ -204,12 +203,10 @@ if submit_btn:
                 model = genai.GenerativeModel(model_name="gemini-2.5-flash", system_instruction=system_instruction)
                 response = model.generate_content(user_prompt)
                 
-                # Split the text based on our secret code
                 full_text = response.text
                 if "=== SPLIT HERE ===" in full_text:
                     parts = full_text.split("=== SPLIT HERE ===")
                     st.session_state.generated_exam = parts[0].strip()
-                    # Ensure the array has a second part before assigning it
                     st.session_state.generated_key = parts[1].strip() if len(parts) > 1 else "Answer key missing."
                 else:
                     st.session_state.generated_exam = full_text
@@ -226,7 +223,6 @@ if st.session_state.generated_exam:
     st.markdown("### 📥 Download Your Documents")
     st.write("Your files have been automatically split and formatted for printing.")
     
-    # Create the background files
     exam_pdf = create_pdf(st.session_state.generated_exam, f"{target_class} - English Examination")
     exam_word = create_word_docx(st.session_state.generated_exam, f"{target_class} - English Examination")
     key_word = create_word_docx(st.session_state.generated_key, f"{target_class} - Answer Key")
